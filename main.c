@@ -1,17 +1,18 @@
 /*
  * File:   pwm_period_test3.c  
- * Testing single psm period
- * PIC12F675 Code Workspace - OPTIMIZED VERSION
+ * beta release
+ * PIC12F675 Code Workspace
  * 
- * single loop takes approx 43us
- * pwm_steps * 2 * 43us = 8.6ms = 116.28Hz for 100 steps Measured on scope @ 127.2201Hz
- *                              = 181.69Hz for 64 steps
- * a single loop must be at least as long as an ADC read
- * otherwise set ADC counter & read less frequently
+ * each loop (pwm step) is ~30us independent of anything else
+ * PWM_STEPS = length of half a duty cycle
+ * frequency = 1/(2*PWM_STEPS*.000030)
+ * increasing PWM_STEPS = slower frequency, but smoother transition
+ * the smaller lookup table is only really useful to save space (on flash)
  * 
  * increase from 127 to 152Hz with xc8 optimisation set in project properties
+ * 127Hz with 128 steps
  * 157Hz with 100 steps
- * 238Hz 64 steps
+ * 244Hz 64 steps
  * 256Hz 60 steps
  * 300Hz 50 steps
  * measured OEM supply as 50V p2p, 242Hz
@@ -30,10 +31,38 @@
 #pragma config CPD = OFF
 
 #define _XTAL_FREQ 4000000
-
 #define LED_A GPIObits.GP4
 #define LED_B GPIObits.GP5
-#define PWM_STEPS 100
+
+// Pre-calculated gamma correction table (1-100% range)
+// Gamma = 2.2, Input: 0-127, Output: 1-100, val^gamma
+// const saves to flash
+const uint8_t GAMMA_LUT128[128] = {
+     1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   2,   2,   2,   2,
+     2,   2,   2,   3,   3,   3,   3,   3,   4,   4,   4,   4,   5,   5,   5,   5,
+     6,   6,   6,   7,   7,   8,   8,   8,   9,   9,  10,  10,  11,  11,  12,  12,
+    13,  13,  14,  14,  15,  15,  16,  17,  17,  18,  19,  19,  20,  21,  21,  22,
+    23,  24,  24,  25,  26,  27,  28,  29,  29,  30,  31,  32,  33,  34,  35,  36,
+    37,  38,  39,  40,  41,  42,  43,  44,  45,  46,  47,  49,  50,  51,  52,  53,
+    54,  56,  57,  58,  60,  61,  62,  63,  65,  66,  68,  69,  70,  72,  73,  75,
+    76,  78,  79,  81,  82,  84,  85,  87,  88,  90,  92,  93,  95,  97,  98, 100,
+};
+// Input: 0-127, Range = 1-100, Steps = 64, Gamma = 2.2
+const uint8_t GAMMA_LUT64[64] = {
+    1,  1,  1,  1,  1,  1,  2,  2,  2,  2,  3,  3,  4,  4,  5,  5,
+    6,  7,  7,  8,  9,  10, 11, 12, 13, 14, 15, 16, 18, 19, 20, 22,
+    23, 25, 26, 28, 30, 32, 34, 35, 37, 39, 42, 44, 46, 48, 51, 53,
+    55, 58, 61, 63, 66, 69, 72, 74, 77, 80, 84, 87, 90, 93, 97, 100
+};
+
+#define GAMMA_LUT GAMMA_LUT128   // which lookup table to use
+#define PWM_STEPS 100            // coarse requency control
+#define SHIFT_BITS 1             // ADC reads as 8bit, left shift to match lookup table length
+/* 64 lookup
+#define GAMMA_LUT GAMMA_LUT64
+#define PWM_STEPS 64
+#define SHIFT_BITS 2
+*/
 
 // Timing constants
 uint8_t pwm_counter = 0;
@@ -41,19 +70,6 @@ uint8_t pwm_duty = 90;  // initial value
 uint8_t phase = 0;      // 0 = A, 1 = B
 // State machine approach - spreads ADC across multiple ISR calls
 uint8_t adc_state = 0;  // 0=idle, 1=converting
-// Pre-calculated gamma correction table (1-100% range)
-// Gamma = 2.2, Input: 0-127, Output: 1-100, val^gamma
-// const saves to flash
-const uint8_t gamma[128] = {
-    1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   2,
-    2,   2,   2,   2,   2,   2,   3,   3,   3,   3,   3,   4,   4,   4,   4,   5,
-    5,   5,   6,   6,   6,   7,   7,   7,   8,   8,   9,   9,   9,  10,  10,  11,
-   11,  12,  12,  13,  13,  14,  14,  15,  16,  16,  17,  17,  18,  19,  19,  20,
-   21,  21,  22,  23,  24,  24,  25,  26,  27,  27,  28,  29,  30,  31,  32,  32,
-   33,  34,  35,  36,  37,  38,  39,  40,  41,  42,  43,  44,  45,  46,  47,  48,
-   49,  50,  51,  53,  54,  55,  56,  57,  58,  60,  61,  62,  63,  65,  66,  67,
-   69,  70,  71,  73,  74,  76,  77,  78,  80,  81,  83,  84,  86,  87,  89,  100,
-};
 
 void setup() {
     // Analogue channel setup
@@ -89,7 +105,7 @@ void main(void) {
            adc_state = 0;
            // ADC complete - read and update
            // read only top 8 bits and shift  right to 7 bits
-           pwm_duty = gamma[ADRESH >> 1];  // Combined: read, shift, lookup
+           pwm_duty = GAMMA_LUT[ADRESH >> SHIFT_BITS];  // Combined: read, shift, lookup
        }
 
        // PWM counter (optimised)

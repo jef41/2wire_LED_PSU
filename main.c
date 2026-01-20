@@ -36,11 +36,9 @@
 #define PWM_STEPS 100
 
 // Timing constants
-//#define ADC_UPDATE_TICKS 5000   // 5000 * 10us = 50ms
-// PWM variables, these were volatile uint8_t , but no ISR so not necessary
 uint8_t pwm_counter = 0;
-uint8_t pwm_duty = 90;
-uint8_t phase = 0;     // 0 = A, 1 = B
+uint8_t pwm_duty = 90;  // initial value
+uint8_t phase = 0;      // 0 = A, 1 = B
 // State machine approach - spreads ADC across multiple ISR calls
 uint8_t adc_state = 0;  // 0=idle, 1=converting
 // Pre-calculated gamma correction table (1-100% range)
@@ -58,59 +56,27 @@ const uint8_t gamma[128] = {
 };
 
 void setup() {
-    // Calibrate oscillator
-    //asm("call 0x348C"); //523Hz
-    //asm("call 0b10000000");
-    //asm("movwf OSCCAL");
-    // memory address 3fff goes back to 3444
-    //OSCCAL = 0b11111100; // max value
-    //OSCCAL = 0b10000000; //0x80 centre value
-    //OSCCAL = 0b00000000; //min value
-    
-    // All digital
-    //ANSEL = 0x00;
-    //ANSEL = 0b00000100;
-    ANSEL = 0b01010100; // 2us per sample (2x11) + 11.5 + 0.5 = 34us
-    //ANSEL = 0b01010100; // 4us per sample = (4*11) + 11.5 +0.5 = 56us
+    // Analogue channel setup
+    //ANSEL = 0b00010100;     // 2us per sample (2x11) + 11.5 + 0.5 = 34us
+    ANSEL = 0b01010100;   // 4us per sample = (4*11) + 11.5 +0.5 = 56us
+    //        -|||---- bits 6:4 ADC conversion clock 101=4us 001=2us
+    //        ----|||| bits 3:0 set AN3:0 channels as analogue
+    // since we are not wating for ADC to complete 4us is better bet at 3V
     
     // GP4 & GP5 outputs
-    //TRISIO = 0b11001111;
     TRISIO = 0b00001100;         // all outputs except AN2 GP3(MCLRE))
+    
+    //ADC configuration
     ADCON0 = 0b00001001;         // left justified, Vdd ref, AN2, ADC ON
     // Disable comparator
-    CMCON = 0x07;
+    CMCON = 0b00000111;         // Comparator Off (Lowest power)
     
     // Initialise outputs
     GPIO = 0x00;
-    
-    // Timer0: ASSIGN PRESCALER TO WDT (PSA=1) = NO PRESCALER ON TIMER0
-    // This gives us direct 1µs ticks
-    //OPTION_REG = 0b11000000;  // T0CS=0, PSA=1 (prescaler to WDT), PS=000
-    // With PSA=1, Timer0 runs at instruction clock rate = 1µs per tick
-    //Timer0 Registers Prescaler= 2 - TMR0 Preset = 251 - Freq = 100000.00 Hz - Period = 0.000010 seconds
-    OPTION_REGbits.T0CS = 0;  // bit 5  TMR0 Clock Source Select bit...0 = Internal Clock (CLKO) 1 = Transition on T0CKI pin
-    OPTION_REGbits.T0SE = 0;  // bit 4 TMR0 Source Edge Select bit 0 = low/high 1 = high/low
-    OPTION_REGbits.PSA = 0;   // bit 3  Prescaler Assignment bit...0 = Prescaler is assigned to the Timer0
-    OPTION_REGbits.PS2 = 0;   // bits 2-0  PS2:PS0: Prescaler Rate Select bits
-    OPTION_REGbits.PS1 = 0;
-    OPTION_REGbits.PS0 = 0;
-    //TMR0 = 251;             // preset for timer register    
-    
-    // GP4 as output, rest as inputs
-    //TRISIO = 0b11001111;  // GP4 = 0 (output)
-    
-    //TMR0 = 0;  // Let it overflow naturally first time
-    
-    // Enable interrupts
-    //INTCONbits.T0IE = 1;
-    //INTCONbits.GIE = 1;
 }
 
 void main(void) {
     setup();
-    
-
-    
     while(1) {
        if (pwm_counter == 0) {
            // Start ADC conversion (non-blocking)

@@ -71,16 +71,7 @@ uint8_t phase = 0;      // 0 = A, 1 = B
 // State machine approach - spreads ADC across multiple ISR calls
 uint8_t adc_state = 0;  // 0=idle, 1=converting
 
-void setup() {
-    // Calibrate oscillator
-    //asm("call 0x348C"); //523Hz
-    //asm("call 0b10000000");
-    //asm("movwf OSCCAL");
-    // memory address 3fff goes back to 3444
-    //OSCCAL = 0b11111100; // max value
-    //OSCCAL = 0b10000000; //0x80 centre value
-    //OSCCAL = 0b00000000; //min value
-    
+void setup() {    
     // Analogue channel setup
     //ANSEL = 0b00010100;     // 2us per sample (2x11) + 11.5 + 0.5 = 34us
     ANSEL = 0b01010100;   // 4us per sample = (4*11) + 11.5 +0.5 = 56us

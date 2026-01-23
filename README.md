@@ -25,3 +25,7 @@ and at some intermediate duty cycle;
 
 These examples are using a 7bit ADC mapped to 100 levels of brightness, so each duty cycle consists of 
 (32us × 100 possibly high according to duty cycle) + (32us × 100 definitely low) ≈ 164Hz
+
+easily fits a 66 × 32 mm board
+
+![render of the populated PCB](./PCB.png)

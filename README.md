@@ -11,9 +11,7 @@ On the PIC, two output pins will drive the BD62110, one ADC input pin will read 
 
 Because we are driving 2 complementary PWM signals the PWM frequency is effectively halved - each singal is on for at most 50% of the time (fractionally below 50% to avoid shoot-through). So I actually need to achieve a ~300Hz PWM. Optimising the code is crucial to achieving the smallest PWM step. Initially at 32us, improvements can be made to reduce this to 25us. Initially I used a 128 entry lookup table for gamma correction, then read the lowest 8 bits of the ADC and shifted that by 1 bit to get a 7 bit (128 values) reading. By using a larger lookup table with 256 entries I use more program space, but don't need to do the left shift operation, saving a few us on each interation. Using 256 PWM steps would mean that I would not need to wrap the counter (as it would overflow), but 128 steps allows for a much faster operation.
 
-Further optimisations include using single comparison operators (> rather than >=). For example, testing `if(a == 1)` if`(a>1)` `if(a>=1)` yields differences, or approaches like: `if(a==6)` vs `if(7>a && a>5)`
-
-I subsequently added a timer branch of this repository. THis branch uses a 32.768KHz crystal as an external clock source then switches modes according to a preset schedule; full brightness On --> PWM dimmed --> Off -->
+This repo branch uses a 32.768KHz crystal as an external clock source (15pF capacitors at clock crystal seemed to work well) then switches modes according to a preset schedule; full brightness On --> PWM dimmed --> Off -->
 
 ![PCB schematic generated from KiCad](./24V_PWM_schematic.png)
 

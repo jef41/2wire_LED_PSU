@@ -13,6 +13,8 @@ Because we are driving 2 complementary PWM signals the PWM frequency is effectiv
 
 Further optimisations include using single comparison operators (> rather than >=). For example, testing `if(a == 1)` if`(a>1)` `if(a>=1)` yields differences, or approaches like: `if(a==6)` vs `if(7>a && a>5)`
 
+I subsequently added a timer branch of this repository. THis branch uses a 32.768KHz crystal as an external clock source then switches modes according to a preset schedule; full brightness On --> PWM dimmed --> Off -->
+
 ![PCB schematic generated from KiCad](./24V_PWM_schematic.png)
 
 at minimum duty cycle the on period for each LED is 32us;

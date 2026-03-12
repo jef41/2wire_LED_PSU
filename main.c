@@ -216,18 +216,24 @@ void run_bright(void)
 }
 
 /* ==========================================================================
- * State: DIM  —  dithered PWM with ADC brightness control, timed
+ * run_pwm()  —  shared dithered PWM engine for DIM and MANUAL states
  *
  * Phase A and phase B each occupy PWM_STEPS counts.
  * ADC conversion is triggered near the end of phase B (always in the
  * off-period, as long as pwm_duty < PWM_STEPS - 10).
+ * CLRWDT is called every outer loop iteration — a single instruction,
+ * cheaper than branching on a flag to decide whether to call it.
+ *
+ * next_on_exit  — state to transition to when state_change_flag is set,
+ *                 unless a manual-override interrupt has already set
+ *                 next_status to STATE_MANUAL.
  * ========================================================================== */
-void run_dim(void)
+static void run_pwm(uint8_t next_on_exit)
 {
     uint8_t pwm_duty_dithered = 0;
-
+ 
     while (!state_change_flag) {
-
+ 
         /* --- Phase A: LED_A on, LED_B carries the duty-cycle edge --- */
         while (!state_change_flag) {
             ++pwm_counter;
@@ -241,7 +247,7 @@ void run_dim(void)
                 break;
             }
         }
-
+ 
         /* --- Phase B: LED_B on, LED_A carries the duty-cycle edge --- */
         while (!state_change_flag) {
             ++pwm_counter;
@@ -256,12 +262,25 @@ void run_dim(void)
                 break;
             }
         }
+ 
+        CLRWDT();
     }
-
+ 
     if (next_status != STATE_MANUAL) {
-        next_status = STATE_OFF;
+        next_status = next_on_exit;
     }
 }
+ 
+/* ==========================================================================
+ * State: DIM  —  dithered PWM with ADC brightness control, timed
+ * ========================================================================== */
+void run_dim(void)         { run_pwm(STATE_OFF);    }
+ 
+/* ==========================================================================
+ * State: MANUAL  —  dithered PWM with ADC control, no timer
+ * TMR1 is stopped before entry in main().
+ * ========================================================================== */
+void manual_override(void) { run_pwm(STATE_BRIGHT); }
 
 /* ==========================================================================
  * State: OFF  —  both outputs dark, CPU sleeping between timer ticks
@@ -274,56 +293,6 @@ void lights_off(void)
     while (!state_change_flag) {
         SLEEP();
         NOP();
-    }
-
-    if (next_status != STATE_MANUAL) {
-        next_status = STATE_BRIGHT;
-    }
-}
-
-/* ==========================================================================
- * State: MANUAL  —  dithered PWM with ADC control, no timer, WDT kept alive
- *
- * Identical to run_dim() except:
- *  - TMR1 is stopped before entry (see main)
- *  - CLRWDT() is called once per outer loop iteration
- * ========================================================================== */
-void manual_override(void)
-{
-    uint8_t pwm_duty_dithered = 0;
-
-    while (!state_change_flag) {
-
-        /* --- Phase A --- */
-        while (!state_change_flag) {
-            ++pwm_counter;
-            LED_A = 1;
-            LED_B = (pwm_counter > pwm_duty_dithered);
-            if (pwm_counter >= PWM_STEPS) {
-                pwm_counter       = 0;
-                phase            ^= 1;
-                pwm_duty          = get_pwm_duty();
-                pwm_duty_dithered = pwm_duty + dither_bump;
-                break;
-            }
-        }
-
-        /* --- Phase B --- */
-        while (!state_change_flag) {
-            ++pwm_counter;
-            LED_B = 1;
-            LED_A = (pwm_counter > pwm_duty_dithered);
-            if (pwm_counter == PWM_STEPS - 10) {
-                ADCON0bits.GO_nDONE = 1;
-            }
-            if (pwm_counter >= PWM_STEPS) {
-                pwm_counter = 0;
-                phase      ^= 1;
-                break;
-            }
-        }
-
-        CLRWDT();
     }
 
     if (next_status != STATE_MANUAL) {

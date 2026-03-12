@@ -253,9 +253,6 @@ uint8_t get_pwm_duty(void)
     return base;               // always return unbumped base
 }
 
-void update_led(void) {
-}
-
 void run_dim(void) {
     // run PWM & read ADC until timer elapsed
     uint8_t pwm_duty_dithered = 0;

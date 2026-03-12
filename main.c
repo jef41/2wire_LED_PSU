@@ -1,22 +1,27 @@
 /*
- * base File:   release_1.c  
- * override switch to keep in PWM mode with no timer
- * accurate delay full on, then switch to PWM, then off, repeat
+ * base File:   dithered.c 
+ * reduce PWM steps to increase frequency 
+ * then implement dithering to restore more levels
+ * especially at low duty cycles where step changes are visible 
  * 
  * PIC12F675 Code Workspace
  * 
- * each pwm step is 25us independent of anything else ~156Hz
- * first PWM step is ~71.36 because reading ADC
+ * each pwm step is 22us independent of anything else ~595Hz
+ * ADC read once PWM period & takes ~75us aquisition & processing time, 
+ * an additional ~50us is code related:
+ * At duty=1, get_pwm_duty() includes the multiply position * run_inc[idx] which is expensive. 
+ * At duty=32 it hits the else branch which just clears the accumulator — much faster
  * PWM_STEPS = length of half a duty cycle
- * frequency = 1/(2*PWM_STEPS*.00007136)
+ * frequency = 1/(2*PWM_STEPS*.0000222 + 0.000075 + 0.000035)
  * increasing PWM_STEPS = slower frequency, but smoother transition
- * the smaller lookup table is only really useful to save space (on flash)
+ * a smaller lookup table is only really useful to save space (on flash)
+ * a large lookup, but with only 32 discrete values
+ * allows higher frequency & room for dithering, 
+ * result is better than 128 discrete birghtness levels
  * 
  * at my location sunset 15:50, dusk 16:35
- * increase from 127 to 152Hz with xc8 optimisation set in project properties
- * ??with 256 steps
- * 160Hz with 128 steps
- * 199Hz with 100 steps
+ * around 160Hz with 128 levels
+ * around 653Hz with 32 levels
  * measured OEM supply as 50V p2p, 242Hz
  * 
  * TODO
@@ -27,7 +32,9 @@
  * save PWM for bright & dim to flash memory?
  * 
  * DONE
- * switch for always use PWM (no timer)
+ * override switch to keep in PWM mode with no timer
+ * accurate delay full on, then switch to PWM, then off, repeat
+ * switch for always on PWM (no timer)
  * start timer
  * add state test
  * when timer elapsed move to next state
@@ -40,7 +47,7 @@
 
 // CONFIG
 #pragma config FOSC = INTRCIO
-#pragma config WDTE = ON
+#pragma config WDTE = OFF
 #pragma config PWRTE = ON
 #pragma config MCLRE = OFF // testing input on GP3 // ON
 #pragma config BOREN = ON
@@ -62,7 +69,8 @@
 
 // bigger lookup uses more program space, but saves doing a shift op when reading ADC
 // use 128 values for PWM because more decreases frequency 
-const uint8_t GAMMA_LUT256[256] = {
+// store on page 2, all of it
+/*const uint8_t GAMMA_LUT256[256] __at(0x200) = {
      1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,
      1,   1,   1,   1,   1,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,
      2,   2,   3,   3,   3,   3,   3,   3,   3,   3,   3,   4,   4,   4,   4,   4,
@@ -80,10 +88,65 @@ const uint8_t GAMMA_LUT256[256] = {
     96,  97,  98,  99, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111,
    112, 113, 114, 115, 116, 117, 118, 119, 120, 122, 123, 124, 125, 126, 127, 128,
 }; 
+const uint8_t GAMMA_LUT64[64] = {
+     1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   2,   2,   2,   2,   2,   2,
+     2,   3,   3,   3,   3,   4,   4,   4,   5,   5,   5,   6,   6,   6,   7,   7,
+     8,   8,   9,   9,  10,  10,  11,  11,  12,  13,  13,  14,  15,  15,  16,  17,
+    17,  18,  19,  20,  21,  22,  22,  23,  24,  25,  26,  27,  28,  29,  30,  31,
+};
+const uint8_t GAMMA_LUT128[128] = {
+     1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,
+     1,   1,   1,   1,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,
+     2,   3,   3,   3,   3,   3,   3,   3,   3,   3,   4,   4,   4,   4,   4,   4,
+     5,   5,   5,   5,   5,   5,   6,   6,   6,   6,   6,   7,   7,   7,   7,   7,
+     8,   8,   8,   8,   9,   9,   9,   9,  10,  10,  10,  10,  11,  11,  11,  12,
+    12,  12,  12,  13,  13,  13,  14,  14,  14,  15,  15,  15,  16,  16,  16,  17,
+    17,  18,  18,  18,  19,  19,  20,  20,  20,  21,  21,  22,  22,  22,  23,  23,
+    24,  24,  25,  25,  26,  26,  27,  27,  27,  28,  28,  29,  29,  30,  31,  32,
+};*/
 
+// 2.2 gamma, 32 levels
+const uint8_t GAMMA_LUT256[256] = {
+     1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,
+     1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,
+     1,   1,   1,   1,   1,   1,   1,   1,   2,   2,   2,   2,   2,   2,   2,   2,
+     2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,
+     2,   3,   3,   3,   3,   3,   3,   3,   3,   3,   3,   3,   3,   3,   3,   3,
+     3,   3,   4,   4,   4,   4,   4,   4,   4,   4,   4,   4,   4,   4,   4,   5,
+     5,   5,   5,   5,   5,   5,   5,   5,   5,   5,   5,   6,   6,   6,   6,   6,
+     6,   6,   6,   6,   6,   7,   7,   7,   7,   7,   7,   7,   7,   7,   8,   8,
+     8,   8,   8,   8,   8,   8,   9,   9,   9,   9,   9,   9,   9,   9,  10,  10,
+    10,  10,  10,  10,  10,  11,  11,  11,  11,  11,  11,  11,  12,  12,  12,  12,
+    12,  12,  12,  13,  13,  13,  13,  13,  13,  14,  14,  14,  14,  14,  14,  15,
+    15,  15,  15,  15,  15,  16,  16,  16,  16,  16,  16,  17,  17,  17,  17,  17,
+    18,  18,  18,  18,  18,  19,  19,  19,  19,  19,  20,  20,  20,  20,  20,  21,
+    21,  21,  21,  21,  22,  22,  22,  22,  23,  23,  23,  23,  23,  24,  24,  24,
+    24,  25,  25,  25,  25,  25,  26,  26,  26,  26,  27,  27,  27,  27,  28,  28,
+    28,  28,  29,  29,  29,  29,  30,  30,  30,  30,  31,  31,  31,  31,  31,  32,
+};
+/*
+// 1.8 gamma, 32 levels - smoother at higher brightness?
+const uint8_t GAMMA_LUT256[256] = {
+     1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   1,
+     1,   1,   1,   1,   1,   1,   1,   1,   1,   1,   2,   2,   2,   2,   2,   2,
+     2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,   2,
+     3,   3,   3,   3,   3,   3,   3,   3,   3,   3,   3,   3,   3,   3,   3,   4,
+     4,   4,   4,   4,   4,   4,   4,   4,   4,   4,   4,   4,   5,   5,   5,   5,
+     5,   5,   5,   5,   5,   5,   5,   5,   6,   6,   6,   6,   6,   6,   6,   6,
+     6,   6,   7,   7,   7,   7,   7,   7,   7,   7,   7,   7,   8,   8,   8,   8,
+     8,   8,   8,   8,   9,   9,   9,   9,   9,   9,   9,   9,   9,  10,  10,  10,
+    10,  10,  10,  10,  10,  11,  11,  11,  11,  11,  11,  11,  12,  12,  12,  12,
+    12,  12,  12,  13,  13,  13,  13,  13,  13,  13,  14,  14,  14,  14,  14,  14,
+    14,  15,  15,  15,  15,  15,  15,  15,  16,  16,  16,  16,  16,  16,  17,  17,
+    17,  17,  17,  17,  18,  18,  18,  18,  18,  18,  19,  19,  19,  19,  19,  19,
+    20,  20,  20,  20,  20,  20,  21,  21,  21,  21,  21,  22,  22,  22,  22,  22,
+    22,  23,  23,  23,  23,  23,  24,  24,  24,  24,  24,  25,  25,  25,  25,  25,
+    26,  26,  26,  26,  26,  27,  27,  27,  27,  27,  28,  28,  28,  28,  28,  29,
+    29,  29,  29,  29,  30,  30,  30,  30,  30,  31,  31,  31,  31,  32,  32,  32,
+};*/
 #define GAMMA_LUT GAMMA_LUT256  // which lookup table to use
-#define PWM_STEPS 128         // coarse requency control - should match max value in LUT
-//#define SHIFT_BITS 1             // ADC reads as 8bit, left shift to match lookup table length
+#define PWM_STEPS 32         // coarse requency control - should match max value in LUT
+#define SHIFT_BITS 1             // ADC reads as 8bit, left shift to match lookup table length
 /* 64 lookup
 #define GAMMA_LUT GAMMA_LUT64
 #define PWM_STEPS 64
@@ -92,6 +155,7 @@ const uint8_t GAMMA_LUT256[256] = {
 
 // PWM timing variables
 volatile uint8_t pwm_counter = 0; //= PWM_STEPS;
+uint8_t myint_ADRESH = 1;
 volatile uint8_t pwm_duty = 1;  // initial value
 volatile uint8_t pwm_active;  // flag to indicate if PWM output should be on or off
 volatile uint8_t phase = 0;      // A or B on, used to alternate which LED is on for PWM dimming
@@ -126,6 +190,7 @@ void setup() {
     //TMR1H = 0xF0;     // 0.125sec overflow
             
     // Analogue channel setup
+    //ANSEL = 0b01110100; //FRC internal clock?
     ANSEL = 0b00010100;     // 2us per sample (2x11) + 11.5 + 0.5 = 34us
     //ANSEL = 0b01010100;   // 4us per sample = (4*11) + 11.5 +0.5 = 56us
     //        -|||---- bits 6:4 ADC conversion clock 101=4us 001=2us
@@ -166,11 +231,12 @@ void __interrupt() ISR(void) {
     // ADC interrupt
     if (PIR1bits.ADIF) {
         PIR1bits.ADIF = 0;  // Clear flag
-        //pwm_duty = GAMMA_LUT[ADRESH >> 2];
-        pwm_duty = GAMMA_LUT[ADRESH]; //no shift if using 256 LUT saves 3us
+        //pwm_duty = GAMMA_LUT[ADRESH >> 3];
+        //pwm_duty = GAMMA_LUT[ADRESH]; //no shift if using 256 LUT saves 3us
+        myint_ADRESH = ADRESH; //>> SHIFT_BITS;
     }
     // GPIO interrupt GP3
-    if (INTCONbits.GPIF) {
+    else if (INTCONbits.GPIF) {
         uint8_t gp3 = GPIObits.GP3;  // latch the pin state first
         INTCONbits.GPIF = 0;         // Clear flag
         if (gp3 != gp3_last_state){
@@ -186,7 +252,7 @@ void __interrupt() ISR(void) {
         }
     }
     // TMR1 interrupt - timing for state changes
-    if (PIR1bits.TMR1IF) {
+    else if (PIR1bits.TMR1IF) {
         PIR1bits.TMR1IF = 0;  // Clear flag
         TMR1H = 0x80; // reset overflow for 1sec ticks
         CLRWDT();
@@ -213,6 +279,114 @@ void __interrupt() ISR(void) {
             }
         }
     }
+}
+/*
+// LUT index where each run of identical values starts
+// base value:                1   2   3   4   5   6
+static const uint8_t run_start[6] = {  0, 21, 34, 42, 51, 57 };
+
+// 255 / run_length for each run
+// base value:                1   2   3   4   5   6
+// run length:               21  13   8   9   6   6
+static const uint8_t run_inc[6]   = { 12, 20, 32, 28, 43, 43 };
+static uint8_t accumulator  = 0;
+static uint8_t dither_bump  = 0;
+
+void apply_dither(void) {
+    uint8_t base = GAMMA_LUT[myint_ADRESH];  // always reset to LUT value
+    pwm_duty = base;
+
+    if (base < 7)
+    {
+        uint8_t idx      = base - 1;
+        uint8_t position = myint_ADRESH - run_start[idx];
+        uint8_t fraction = position * run_inc[idx];
+
+        uint8_t old_acc  = accumulator;
+        accumulator      = old_acc + fraction;
+        dither_bump      = (accumulator < old_acc) ? 1 : 0;  // carry
+    }
+    else
+    {
+        accumulator = 0;
+        dither_bump  = 0;
+    }
+}*/
+// LUT index where each run of identical values starts
+// base value:                1   2   3   4   5   6
+// base value:                  1   2   3   4   5   6   7
+//static const uint8_t run_start[7] = {  0, 10, 17, 21, 24, 27, 30 };
+// run length:                 
+
+
+// 31 / run_length for each run
+// base value:                1   2   3   4   5   6   7
+// run length:                10  7   4   3   3   3   2
+//static const uint8_t run_inc[7]   = { 26, 36, 64, 85, 85, 85, 128 };
+// base value:                    1    2    3    4    5    6    7    8    9   10
+/*static const uint8_t run_start[10] = {  0,  20,  33,  42,  48,  54,  59,  64,  68,  72 };
+// run length:                   20   13    9    6    6    5    5    4    4    4
+static const uint8_t run_inc[10]   = { 13,  20,  28,  42,  42,  51,  51,  64,  64,  64 };
+*/
+// base value:                    1    2    3    4    5    6    7    8    9   10
+static const uint8_t run_start[32] = {
+      0,  40,  65,  82,  95, 107, 117, 126, 134, 142,
+    149, 156, 163, 169, 175, 181, 187, 192, 197, 202,
+    207, 212, 216, 221, 225, 230, 234, 238, 242, 246,
+    250, 255
+};
+// run length
+static const uint8_t run_inc[32] = {
+      6,  10,  15,  20,  21,  26,  28,  32,  32,  36,
+     36,  36,  42,  42,  42,  42,  51,  51,  51,  51,
+     51,  64,  51,  64,  51,  64,  64,  64,  64,  64,
+     51,  255
+};
+/*
+static const uint8_t run_start[32] = {
+      0,  26,  48,  63,  76,  88,  98, 108, 116, 125, 133, 140, 147, 154, 161, 168,
+    174, 180, 186, 192, 198, 203, 209, 214, 219, 224, 229, 234, 239, 244, 249, 253,
+};
+
+static const uint8_t run_inc[32] = {
+     10,  12,  17,  20,  21,  26,  26,  32,  28,  32,  36,  36,  36,  36,  36,  42,
+     42,  42,  42,  42,  51,  42,  51,  51,  51,  51,  51,  51,  51,  51,  64, 128,
+};*/
+static uint8_t last_base    = 0;
+static uint8_t accumulator = 0;
+static uint8_t dither_bump = 0;
+uint8_t get_pwm_duty(void)
+{
+    uint8_t base = GAMMA_LUT[myint_ADRESH];
+    dither_bump = 0;
+    if (myint_ADRESH == 0)  // suppress dimming at lowest level
+    {
+        accumulator = 0;
+        dither_bump = 0;
+    }
+    else if (base < 32)  //leaves max brightness undithered
+    {
+        if (base != last_base)
+        {
+            accumulator = 0;
+            last_base   = base;
+        }
+        uint8_t idx      = base - 1;
+        uint8_t position = myint_ADRESH - run_start[idx];
+        uint8_t fraction = position * run_inc[idx];
+        uint8_t old_acc  = accumulator;
+        accumulator      = old_acc + fraction;
+        if (accumulator < old_acc)
+        {
+            dither_bump = 1;   // flag only, do NOT increment base
+        }
+    }
+    else
+    {
+        accumulator = 0;
+        last_base   = 0;
+    }
+    return base;               // always return unbumped base
 }
 
 void run_dim(void) {
@@ -289,35 +463,52 @@ void lights_off(void) {
 
 void manual_override(void) {
     // run on dimmer, with no timer
-    /*LED_A = 0;
-    LED_B = 0;
+    uint8_t pwm_duty_dithered = 0;
+    static uint8_t adc_divider = 0;
     while(!state_change_flag) {
-        SLEEP();
-        NOP();
-    }*/
-    //run_dim();  // loop here until state change
-    //next_status = STATE_BRIGHT;  // (re)start timer
-    while(!state_change_flag) {
-        if (++pwm_counter > PWM_STEPS) {
-                pwm_counter -= PWM_STEPS;  // 30us Cheaper than = 0 with modulo
-                phase ^= 1;
-                ADCON0bits.GO_nDONE = 1; 
-            }
-        // LED update
-        pwm_active = (pwm_counter > pwm_duty);
-        if (phase) {
+        // phase A
+        while(!state_change_flag) {
+            ++pwm_counter;
             LED_A = 1;
-            LED_B = pwm_active;
-        } else {
-            LED_B = 1;
-            LED_A = pwm_active;
+            //LED_B = (pwm_counter > pwm_duty);
+            LED_B = (pwm_counter > pwm_duty_dithered);
+            /*if (pwm_counter == PWM_STEPS - 10) {   // 10 steps from end, always in off period
+                ADCON0bits.GO_nDONE = 1;           // as long as pwm_duty < PWM_STEPS - 10
+            }*/
+            //ADCON0bits.GO_nDONE = 1;
+            if (pwm_counter >= PWM_STEPS) {
+                pwm_counter = 0;
+                phase ^= 1;
+                pwm_duty = get_pwm_duty();   // update duty, dither_bump set inside
+                pwm_duty_dithered = pwm_duty + dither_bump;  // computed once per period
+            // at phase A rollover, replace ADCON0bits.GO_nDONE = 1 with:
+            /*if (++adc_divider >= 60) {
+                adc_divider = 0;
+                ADCON0bits.GO_nDONE = 1;
+            }*/
+                break;
+            }
         }
-        /*LED_A = 0;
-        LED_B = 0;*/
+        // phase B - 
+        while(!state_change_flag) {
+            ++pwm_counter;
+            LED_B = 1;
+            //LED_A = (pwm_counter > pwm_duty);
+            LED_A = (pwm_counter > pwm_duty_dithered);
+            if (pwm_counter == PWM_STEPS - 10) {   // 10 steps from end, always in off period
+                ADCON0bits.GO_nDONE = 1;           // as long as pwm_duty < PWM_STEPS - 10
+            }
+            //ADCON0bits.GO_nDONE = 1;
+            if (pwm_counter >= PWM_STEPS) {
+                pwm_counter = 0;
+                phase ^= 1;
+                break;
+            }
+        }
         CLRWDT();
     }
     if(next_status != STATE_MANUAL){
-        next_status = STATE_BRIGHT;  // (re)start timer
+        next_status = STATE_BRIGHT;
     }
 }
 
@@ -364,3 +555,4 @@ void main(void) {
         }
     }
 }
+

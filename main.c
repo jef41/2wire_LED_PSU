@@ -103,6 +103,7 @@ static const uint8_t run_inc[32] = {
      51,  64,  51,  64,  51,  64,  64,  64,  64,  64,
      51,  255
 };
+//dithering variables
 static uint8_t last_base    = 0;
 static uint8_t accumulator = 0;
 static uint8_t dither_bump = 0;
@@ -118,7 +119,7 @@ volatile uint8_t tick_lo = 0x14;   // 9450 = 0x24EA
 volatile uint8_t tick_hi = 0x00;
 volatile uint8_t state_change_flag = 0;   //volatile ensures value is evaluated at each use
 volatile uint8_t next_status = STATE_BRIGHT;  // start in bright state
-uint8_t adc_state = 0;  // 0=idle, 1=converting
+//uint8_t adc_state = 0;  // 0=idle, 1=converting
 uint8_t gp3_last_state;
 
 void setup() {
@@ -252,6 +253,9 @@ uint8_t get_pwm_duty(void)
     return base;               // always return unbumped base
 }
 
+void update_led(void) {
+}
+
 void run_dim(void) {
     // run PWM & read ADC until timer elapsed
     uint8_t pwm_duty_dithered = 0;
@@ -333,9 +337,10 @@ void lights_off(void) {
 
 void manual_override(void) {
     // run on dimmer, with no timer
+    // same as run_dim but has CLRWDT
     uint8_t pwm_duty_dithered = 0;
-    static uint8_t adc_divider = 0;
     while(!state_change_flag) {
+        //static uint8_t adc_divider = 0;
         // phase A
         while(!state_change_flag) {
             ++pwm_counter;
@@ -374,7 +379,7 @@ void manual_override(void) {
                 phase ^= 1;
                 break;
             }
-        }
+        } 
         CLRWDT();
     }
     if(next_status != STATE_MANUAL){
@@ -396,29 +401,29 @@ void main(void) {
             case STATE_BRIGHT: 
                 //start timer for bright state 0600-1635
                 // 10 hours 35 minutes = 38,100 seconds
-                /*tick_lo = 0xD4;   // 38100 = 0x94D4
-                tick_hi = 0x94;*/
-                tick_lo = 0x0a;
-                tick_hi = 0x00;
+                tick_lo = 0xD4;   // 38100 = 0x94D4
+                tick_hi = 0x94;
+                //tick_lo = 0x0a;
+                //tick_hi = 0x00;
                 TMR1ON = 1;
                 run_bright();
                 break;
             case STATE_DIM:
                 //start timer for dim state 1635-2300
                 // 6 hours 25 minutes = 23,100 seconds
-                /*tick_lo = 0x3C;   // 23100 = 0x5A3C
-                tick_hi = 0x5A;*/
-                tick_lo = 0x0a;
-                tick_hi = 0x00;
+                tick_lo = 0x3C;   // 23100 = 0x5A3C
+                tick_hi = 0x5A;
+                //tick_lo = 0x0a;
+                //tick_hi = 0x00;
                 run_dim();
                 break;
             default:
                 //start timer for off state
                 // 7 hours 0 minutes = 25,200 seconds
-                /*tick_lo = 0x70;    // 25200 = 0x6270
-                tick_hi = 0x62; */
-                tick_lo = 0x0a;
-                tick_hi = 0x00;
+                tick_lo = 0x70;    // 25200 = 0x6270
+                tick_hi = 0x62;
+                //tick_lo = 0x0a;
+                //tick_hi = 0x00;
                 lights_off();
                 break;
         }
